@@ -17,7 +17,6 @@
  * under the License.
  */
 
-import React from 'react';
 import { DatasourceType, t } from '@superset-ui/core';
 import {
   ColumnMeta,
@@ -136,6 +135,7 @@ export const exploreInitialData: ExplorePageInitialData = {
     columns: [{ column_name: 'a' }],
     metrics: [{ metric_name: 'first' }, { metric_name: 'second' }],
     column_formats: {},
+    currency_formats: {},
     verbose_map: {},
     main_dttm_col: '',
     datasource_name: '8__table',
@@ -154,6 +154,7 @@ export const fallbackExploreInitialData: ExplorePageInitialData = {
     columns: [],
     metrics: [],
     column_formats: {},
+    currency_formats: {},
     verbose_map: {},
     main_dttm_col: '',
     owners: [],

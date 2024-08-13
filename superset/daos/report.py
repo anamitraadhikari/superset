@@ -14,17 +14,13 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-import json
+from __future__ import annotations
+
 import logging
 from datetime import datetime
-from typing import Any, Optional
-
-from flask_appbuilder import Model
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from typing import Any
 
 from superset.daos.base import BaseDAO
-from superset.daos.exceptions import DAOCreateFailedError, DAODeleteFailedError
 from superset.extensions import db
 from superset.reports.filters import ReportScheduleFilter
 from superset.reports.models import (
@@ -34,6 +30,7 @@ from superset.reports.models import (
     ReportScheduleType,
     ReportState,
 )
+from superset.utils import json
 from superset.utils.core import get_user_id
 
 logger = logging.getLogger(__name__)
@@ -94,30 +91,8 @@ class ReportScheduleDAO(BaseDAO[ReportSchedule]):
         )
 
     @staticmethod
-    def bulk_delete(
-        models: Optional[list[ReportSchedule]], commit: bool = True
-    ) -> None:
-        item_ids = [model.id for model in models] if models else []
-        try:
-            # Clean owners secondary table
-            report_schedules = (
-                db.session.query(ReportSchedule)
-                .filter(ReportSchedule.id.in_(item_ids))
-                .all()
-            )
-            for report_schedule in report_schedules:
-                report_schedule.owners = []
-            for report_schedule in report_schedules:
-                db.session.delete(report_schedule)
-            if commit:
-                db.session.commit()
-        except SQLAlchemyError as ex:
-            db.session.rollback()
-            raise DAODeleteFailedError(str(ex)) from ex
-
-    @staticmethod
     def validate_unique_creation_method(
-        dashboard_id: Optional[int] = None, chart_id: Optional[int] = None
+        dashboard_id: int | None = None, chart_id: int | None = None
     ) -> bool:
         """
         Validate if the user already has a chart or dashboard
@@ -135,7 +110,7 @@ class ReportScheduleDAO(BaseDAO[ReportSchedule]):
 
     @staticmethod
     def validate_update_uniqueness(
-        name: str, report_type: ReportScheduleType, expect_id: Optional[int] = None
+        name: str, report_type: ReportScheduleType, expect_id: int | None = None
     ) -> bool:
         """
         Validate if this name and type is unique.
@@ -155,90 +130,89 @@ class ReportScheduleDAO(BaseDAO[ReportSchedule]):
         return found_id is None or found_id == expect_id
 
     @classmethod
-    def create(cls, properties: dict[str, Any], commit: bool = True) -> ReportSchedule:
-        """
-        create a report schedule and nested recipients
-        :raises: DAOCreateFailedError
-        """
-
-        try:
-            model = ReportSchedule()
-            for key, value in properties.items():
-                if key != "recipients":
-                    setattr(model, key, value)
-            recipients = properties.get("recipients", [])
-            for recipient in recipients:
-                model.recipients.append(  # pylint: disable=no-member
-                    ReportRecipients(
-                        type=recipient["type"],
-                        recipient_config_json=json.dumps(
-                            recipient["recipient_config_json"]
-                        ),
-                    )
-                )
-            db.session.add(model)
-            if commit:
-                db.session.commit()
-            return model
-        except SQLAlchemyError as ex:
-            db.session.rollback()
-            raise DAOCreateFailedError(str(ex)) from ex
-
-    @classmethod
-    def update(
-        cls, model: Model, properties: dict[str, Any], commit: bool = True
+    def create(
+        cls,
+        item: ReportSchedule | None = None,
+        attributes: dict[str, Any] | None = None,
     ) -> ReportSchedule:
         """
-        create a report schedule and nested recipients
-        :raises: DAOCreateFailedError
+        Create a report schedule with nested recipients.
+
+        :param item: The object to create
+        :param attributes: The attributes associated with the object to create
         """
 
-        try:
-            for key, value in properties.items():
-                if key != "recipients":
-                    setattr(model, key, value)
-            if "recipients" in properties:
-                recipients = properties["recipients"]
-                model.recipients = [
+        # TODO(john-bodley): Determine why we need special handling for recipients.
+        if not item:
+            item = ReportSchedule()
+
+        if attributes:
+            if recipients := attributes.pop("recipients", None):
+                attributes["recipients"] = [
                     ReportRecipients(
                         type=recipient["type"],
                         recipient_config_json=json.dumps(
                             recipient["recipient_config_json"]
                         ),
-                        report_schedule=model,
+                        report_schedule=item,
                     )
                     for recipient in recipients
                 ]
-            db.session.merge(model)
-            if commit:
-                db.session.commit()
-            return model
-        except SQLAlchemyError as ex:
-            db.session.rollback()
-            raise DAOCreateFailedError(str(ex)) from ex
+
+        return super().create(item, attributes)
+
+    @classmethod
+    def update(
+        cls,
+        item: ReportSchedule | None = None,
+        attributes: dict[str, Any] | None = None,
+    ) -> ReportSchedule:
+        """
+        Update a report schedule with nested recipients.
+
+        :param item: The object to update
+        :param attributes: The attributes associated with the object to update
+        """
+
+        # TODO(john-bodley): Determine why we need special handling for recipients.
+        if not item:
+            item = ReportSchedule()
+
+        if attributes:
+            if recipients := attributes.pop("recipients", None):
+                attributes["recipients"] = [
+                    ReportRecipients(
+                        type=recipient["type"],
+                        recipient_config_json=json.dumps(
+                            recipient["recipient_config_json"]
+                        ),
+                        report_schedule=item,
+                    )
+                    for recipient in recipients
+                ]
+
+        return super().update(item, attributes)
 
     @staticmethod
-    def find_active(session: Optional[Session] = None) -> list[ReportSchedule]:
+    def find_active() -> list[ReportSchedule]:
         """
-        Find all active reports. If session is passed it will be used instead of the
-        default `db.session`, this is useful when on a celery worker session context
+        Find all active reports.
         """
-        session = session or db.session
         return (
-            session.query(ReportSchedule).filter(ReportSchedule.active.is_(True)).all()
+            db.session.query(ReportSchedule)
+            .filter(ReportSchedule.active.is_(True))
+            .all()
         )
 
     @staticmethod
     def find_last_success_log(
         report_schedule: ReportSchedule,
-        session: Optional[Session] = None,
-    ) -> Optional[ReportExecutionLog]:
+    ) -> ReportExecutionLog | None:
         """
         Finds last success execution log for a given report
         """
-        session = session or db.session
         return (
-            session.query(ReportExecutionLog)
+            db.session.query(ReportExecutionLog)
             .filter(
                 ReportExecutionLog.state == ReportState.SUCCESS,
                 ReportExecutionLog.report_schedule == report_schedule,
@@ -250,14 +224,12 @@ class ReportScheduleDAO(BaseDAO[ReportSchedule]):
     @staticmethod
     def find_last_entered_working_log(
         report_schedule: ReportSchedule,
-        session: Optional[Session] = None,
-    ) -> Optional[ReportExecutionLog]:
+    ) -> ReportExecutionLog | None:
         """
         Finds last success execution log for a given report
         """
-        session = session or db.session
         return (
-            session.query(ReportExecutionLog)
+            db.session.query(ReportExecutionLog)
             .filter(
                 ReportExecutionLog.state == ReportState.WORKING,
                 ReportExecutionLog.report_schedule == report_schedule,
@@ -270,14 +242,12 @@ class ReportScheduleDAO(BaseDAO[ReportSchedule]):
     @staticmethod
     def find_last_error_notification(
         report_schedule: ReportSchedule,
-        session: Optional[Session] = None,
-    ) -> Optional[ReportExecutionLog]:
+    ) -> ReportExecutionLog | None:
         """
         Finds last error email sent
         """
-        session = session or db.session
         last_error_email_log = (
-            session.query(ReportExecutionLog)
+            db.session.query(ReportExecutionLog)
             .filter(
                 ReportExecutionLog.error_message
                 == REPORT_SCHEDULE_ERROR_NOTIFICATION_MARKER,
@@ -290,7 +260,7 @@ class ReportScheduleDAO(BaseDAO[ReportSchedule]):
             return None
         # Checks that only errors have occurred since the last email
         report_from_last_email = (
-            session.query(ReportExecutionLog)
+            db.session.query(ReportExecutionLog)
             .filter(
                 ReportExecutionLog.state.notin_(
                     [ReportState.ERROR, ReportState.WORKING]
@@ -304,25 +274,12 @@ class ReportScheduleDAO(BaseDAO[ReportSchedule]):
         return last_error_email_log if not report_from_last_email else None
 
     @staticmethod
-    def bulk_delete_logs(
-        model: ReportSchedule,
-        from_date: datetime,
-        session: Optional[Session] = None,
-        commit: bool = True,
-    ) -> Optional[int]:
-        session = session or db.session
-        try:
-            row_count = (
-                session.query(ReportExecutionLog)
-                .filter(
-                    ReportExecutionLog.report_schedule == model,
-                    ReportExecutionLog.end_dttm < from_date,
-                )
-                .delete(synchronize_session="fetch")
+    def bulk_delete_logs(model: ReportSchedule, from_date: datetime) -> int | None:
+        return (
+            db.session.query(ReportExecutionLog)
+            .filter(
+                ReportExecutionLog.report_schedule == model,
+                ReportExecutionLog.end_dttm < from_date,
             )
-            if commit:
-                session.commit()
-            return row_count
-        except SQLAlchemyError as ex:
-            session.rollback()
-            raise DAODeleteFailedError(str(ex)) from ex
+            .delete(synchronize_session="fetch")
+        )

@@ -18,13 +18,13 @@
  */
 import { DatasourceType } from '@superset-ui/core';
 import fetchMock from 'fetch-mock';
+import * as uiCore from '@superset-ui/core';
 import {
   setDatasource,
   changeDatasource,
   saveDataset,
 } from 'src/explore/actions/datasourcesActions';
 import sinon from 'sinon';
-import * as ClientError from 'src/utils/getClientErrorObject';
 import datasourcesReducer from '../reducers/datasourcesReducer';
 import { updateFormDataByDatasource } from './exploreActions';
 
@@ -35,6 +35,7 @@ const CURRENT_DATASOURCE = {
   columns: [],
   metrics: [],
   column_formats: {},
+  currency_formats: {},
   verbose_map: {},
   main_dttm_col: '__timestamp',
   // eg. ['["ds", true]', 'ds [asc]']
@@ -48,6 +49,7 @@ const NEW_DATASOURCE = {
   columns: [],
   metrics: [],
   column_formats: {},
+  currency_formats: {},
   verbose_map: {},
   main_dttm_col: '__timestamp',
   // eg. ['["ds", true]', 'ds [asc]']
@@ -124,7 +126,7 @@ test('updateSlice with add to existing dashboard handles failure', async () => {
   const sampleError = new Error('sampleError');
   fetchMock.post(saveDatasetEndpoint, { throws: sampleError });
   const dispatch = sinon.spy();
-  const errorSpy = jest.spyOn(ClientError, 'getClientErrorObject');
+  const errorSpy = jest.spyOn(uiCore, 'getClientErrorObject');
 
   let caughtError;
   try {

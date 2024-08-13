@@ -15,7 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 # pylint: disable=too-many-lines
-import json
 import logging
 from datetime import datetime
 from io import BytesIO
@@ -32,22 +31,6 @@ from werkzeug.wrappers import Response as WerkzeugResponse
 from werkzeug.wsgi import FileWrapper
 
 from superset import app, is_feature_enabled, thumbnail_cache
-from superset.charts.commands.bulk_delete import BulkDeleteChartCommand
-from superset.charts.commands.create import CreateChartCommand
-from superset.charts.commands.delete import DeleteChartCommand
-from superset.charts.commands.exceptions import (
-    ChartBulkDeleteFailedError,
-    ChartCreateFailedError,
-    ChartDeleteFailedError,
-    ChartForbiddenError,
-    ChartInvalidError,
-    ChartNotFoundError,
-    ChartUpdateFailedError,
-)
-from superset.charts.commands.export import ExportChartsCommand
-from superset.charts.commands.importers.dispatcher import ImportChartsCommand
-from superset.charts.commands.update import UpdateChartCommand
-from superset.charts.commands.warm_up_cache import ChartWarmUpCacheCommand
 from superset.charts.filters import (
     ChartAllTextFilter,
     ChartCertifiedFilter,
@@ -56,7 +39,8 @@ from superset.charts.filters import (
     ChartFilter,
     ChartHasCreatedByFilter,
     ChartOwnedCreatedFavoredByMeFilter,
-    ChartTagFilter,
+    ChartTagIdFilter,
+    ChartTagNameFilter,
 )
 from superset.charts.schemas import (
     CHART_SCHEMAS,
@@ -70,7 +54,22 @@ from superset.charts.schemas import (
     screenshot_query_schema,
     thumbnail_query_schema,
 )
-from superset.commands.exceptions import CommandException
+from superset.commands.chart.create import CreateChartCommand
+from superset.commands.chart.delete import DeleteChartCommand
+from superset.commands.chart.exceptions import (
+    ChartCreateFailedError,
+    ChartDeleteFailedError,
+    ChartForbiddenError,
+    ChartInvalidError,
+    ChartNotFoundError,
+    ChartUpdateFailedError,
+    DashboardsForbiddenError,
+)
+from superset.commands.chart.export import ExportChartsCommand
+from superset.commands.chart.importers.dispatcher import ImportChartsCommand
+from superset.commands.chart.update import UpdateChartCommand
+from superset.commands.chart.warm_up_cache import ChartWarmUpCacheCommand
+from superset.commands.exceptions import CommandException, TagForbiddenError
 from superset.commands.importers.exceptions import (
     IncorrectFormatError,
     NoValidFilesFoundError,
@@ -82,7 +81,8 @@ from superset.extensions import event_logger
 from superset.models.slice import Slice
 from superset.tasks.thumbnails import cache_chart_thumbnail
 from superset.tasks.utils import get_current_user
-from superset.utils.screenshots import ChartScreenshot
+from superset.utils import json
+from superset.utils.screenshots import ChartScreenshot, DEFAULT_CHART_WINDOW_SIZE
 from superset.utils.urls import get_url_path
 from superset.views.base_api import (
     BaseSupersetModelRestApi,
@@ -160,6 +160,7 @@ class ChartRestApi(BaseSupersetModelRestApi):
         "cache_timeout",
         "changed_by.first_name",
         "changed_by.last_name",
+        "changed_by.id",
         "changed_by_name",
         "changed_on_delta_humanized",
         "changed_on_dttm",
@@ -238,7 +239,7 @@ class ChartRestApi(BaseSupersetModelRestApi):
         ],
         "slice_name": [ChartAllTextFilter],
         "created_by": [ChartHasCreatedByFilter, ChartCreatedByMeFilter],
-        "tags": [ChartTagFilter],
+        "tags": [ChartTagNameFilter, ChartTagIdFilter],
     }
     # Will just affect _info endpoint
     edit_columns = ["slice_name"]
@@ -268,13 +269,15 @@ class ChartRestApi(BaseSupersetModelRestApi):
     base_related_field_filters = {
         "owners": [["id", BaseFilterRelatedUsers, lambda: []]],
         "created_by": [["id", BaseFilterRelatedUsers, lambda: []]],
+        "changed_by": [["id", BaseFilterRelatedUsers, lambda: []]],
     }
     related_field_filters = {
         "owners": RelatedFieldFilter("first_name", FilterRelatedOwners),
         "created_by": RelatedFieldFilter("first_name", FilterRelatedOwners),
+        "changed_by": RelatedFieldFilter("first_name", FilterRelatedOwners),
     }
 
-    allowed_rel_fields = {"owners", "created_by"}
+    allowed_rel_fields = {"owners", "created_by", "changed_by"}
 
     @expose("/", methods=("POST",))
     @protect()
@@ -286,11 +289,10 @@ class ChartRestApi(BaseSupersetModelRestApi):
     )
     @requires_json
     def post(self) -> Response:
-        """Creates a new Chart
+        """Create a new chart.
         ---
         post:
-          description: >-
-            Create a new Chart.
+          summary: Create a new chart
           requestBody:
             description: Chart schema
             required: true
@@ -314,6 +316,8 @@ class ChartRestApi(BaseSupersetModelRestApi):
               $ref: '#/components/responses/400'
             401:
               $ref: '#/components/responses/401'
+            403:
+              $ref: '#/components/responses/403'
             422:
               $ref: '#/components/responses/422'
             500:
@@ -327,6 +331,8 @@ class ChartRestApi(BaseSupersetModelRestApi):
         try:
             new_model = CreateChartCommand(item).run()
             return self.response(201, id=new_model.id, result=item)
+        except DashboardsForbiddenError as ex:
+            return self.response(ex.status, message=ex.message)
         except ChartInvalidError as ex:
             return self.response_422(message=ex.normalized_messages())
         except ChartCreateFailedError as ex:
@@ -348,11 +354,10 @@ class ChartRestApi(BaseSupersetModelRestApi):
     )
     @requires_json
     def put(self, pk: int) -> Response:
-        """Changes a Chart
+        """Update a chart.
         ---
         put:
-          description: >-
-            Changes a Chart.
+          summary: Update a chart
           parameters:
           - in: path
             schema:
@@ -402,6 +407,8 @@ class ChartRestApi(BaseSupersetModelRestApi):
             response = self.response_404()
         except ChartForbiddenError:
             response = self.response_403()
+        except TagForbiddenError as ex:
+            response = self.response(403, message=str(ex))
         except ChartInvalidError as ex:
             response = self.response_422(message=ex.normalized_messages())
         except ChartUpdateFailedError as ex:
@@ -424,11 +431,10 @@ class ChartRestApi(BaseSupersetModelRestApi):
         log_to_statsd=False,
     )
     def delete(self, pk: int) -> Response:
-        """Deletes a Chart
+        """Delete a chart.
         ---
         delete:
-          description: >-
-            Deletes a Chart.
+          summary: Delete a chart
           parameters:
           - in: path
             schema:
@@ -456,7 +462,7 @@ class ChartRestApi(BaseSupersetModelRestApi):
               $ref: '#/components/responses/500'
         """
         try:
-            DeleteChartCommand(pk).run()
+            DeleteChartCommand([pk]).run()
             return self.response(200, message="OK")
         except ChartNotFoundError:
             return self.response_404()
@@ -481,11 +487,10 @@ class ChartRestApi(BaseSupersetModelRestApi):
         log_to_statsd=False,
     )
     def bulk_delete(self, **kwargs: Any) -> Response:
-        """Delete bulk Charts
+        """Bulk delete charts.
         ---
         delete:
-          description: >-
-            Deletes multiple Charts in a bulk operation.
+          summary: Bulk delete charts
           parameters:
           - in: query
             name: q
@@ -516,7 +521,7 @@ class ChartRestApi(BaseSupersetModelRestApi):
         """
         item_ids = kwargs["rison"]
         try:
-            BulkDeleteChartCommand(item_ids).run()
+            DeleteChartCommand(item_ids).run()
             return self.response(
                 200,
                 message=ngettext(
@@ -527,7 +532,7 @@ class ChartRestApi(BaseSupersetModelRestApi):
             return self.response_404()
         except ChartForbiddenError:
             return self.response_403()
-        except ChartBulkDeleteFailedError as ex:
+        except ChartDeleteFailedError as ex:
             return self.response_422(message=str(ex))
 
     @expose("/<pk>/cache_screenshot/", methods=("GET",))
@@ -541,10 +546,10 @@ class ChartRestApi(BaseSupersetModelRestApi):
         log_to_statsd=False,
     )
     def cache_screenshot(self, pk: int, **kwargs: Any) -> WerkzeugResponse:
-        """
+        """Compute and cache a screenshot.
         ---
         get:
-          description: Compute and cache a screenshot.
+          summary: Compute and cache a screenshot
           parameters:
           - in: path
             schema:
@@ -573,7 +578,7 @@ class ChartRestApi(BaseSupersetModelRestApi):
               $ref: '#/components/responses/500'
         """
         rison_dict = kwargs["rison"]
-        window_size = rison_dict.get("window_size") or (800, 600)
+        window_size = rison_dict.get("window_size") or DEFAULT_CHART_WINDOW_SIZE
 
         # Don't shrink the image if thumb_size is not specified
         thumb_size = rison_dict.get("thumb_size") or window_size
@@ -613,10 +618,10 @@ class ChartRestApi(BaseSupersetModelRestApi):
         log_to_statsd=False,
     )
     def screenshot(self, pk: int, digest: str) -> WerkzeugResponse:
-        """Get Chart screenshot
+        """Get a computed screenshot from cache.
         ---
         get:
-          description: Get a computed screenshot from cache.
+          summary: Get a computed screenshot from cache
           parameters:
           - in: path
             schema:
@@ -667,9 +672,10 @@ class ChartRestApi(BaseSupersetModelRestApi):
         log_to_statsd=False,
     )
     def thumbnail(self, pk: int, digest: str, **kwargs: Any) -> WerkzeugResponse:
-        """Get Chart thumbnail
+        """Compute or get already computed chart thumbnail from cache.
         ---
         get:
+          summary: Get chart thumbnail
           description: Compute or get already computed chart thumbnail from cache.
           parameters:
           - in: path
@@ -754,11 +760,10 @@ class ChartRestApi(BaseSupersetModelRestApi):
         log_to_statsd=False,
     )
     def export(self, **kwargs: Any) -> Response:
-        """Export charts
+        """Download multiple charts as YAML files.
         ---
         get:
-          description: >-
-            Exports multiple charts and downloads them as YAML files
+          summary: Download multiple charts as YAML files
           parameters:
           - in: query
             name: q
@@ -793,7 +798,7 @@ class ChartRestApi(BaseSupersetModelRestApi):
             try:
                 for file_name, file_content in ExportChartsCommand(requested_ids).run():
                     with bundle.open(f"{root}/{file_name}", "w") as fp:
-                        fp.write(file_content.encode())
+                        fp.write(file_content().encode())
             except ChartNotFoundError:
                 return self.response_404()
         buf.seek(0)
@@ -819,11 +824,10 @@ class ChartRestApi(BaseSupersetModelRestApi):
         log_to_statsd=False,
     )
     def favorite_status(self, **kwargs: Any) -> Response:
-        """Favorite stars for Charts
+        """Check favorited charts for current user.
         ---
         get:
-          description: >-
-            Check favorited dashboards for current user
+          summary: Check favorited charts for current user
           parameters:
           - in: query
             name: q
@@ -868,11 +872,10 @@ class ChartRestApi(BaseSupersetModelRestApi):
         log_to_statsd=False,
     )
     def add_favorite(self, pk: int) -> Response:
-        """Marks the chart as favorite
+        """Mark the chart as favorite for the current user.
         ---
         post:
-          description: >-
-            Marks the chart as favorite for the current user
+          summary: Mark the chart as favorite for the current user
           parameters:
           - in: path
             schema:
@@ -912,11 +915,10 @@ class ChartRestApi(BaseSupersetModelRestApi):
         log_to_statsd=False,
     )
     def remove_favorite(self, pk: int) -> Response:
-        """Remove the chart from the user favorite list
+        """Remove the chart from the user favorite list.
         ---
         delete:
-          description: >-
-            Remove the chart from the user favorite list
+          summary: Remove the chart from the user favorite list
           parameters:
           - in: path
             schema:
@@ -956,11 +958,10 @@ class ChartRestApi(BaseSupersetModelRestApi):
         log_to_statsd=False,
     )
     def warm_up_cache(self) -> Response:
-        """
+        """Warm up the cache for the chart.
         ---
         put:
-          summary: >-
-            Warms up the cache for the chart
+          summary: Warm up the cache for the chart
           description: >-
             Warms up the cache for the chart.
             Note for slices a force refresh occurs.
@@ -1012,9 +1013,10 @@ class ChartRestApi(BaseSupersetModelRestApi):
     )
     @requires_form_data
     def import_(self) -> Response:
-        """Import chart(s) with associated datasets and databases
+        """Import chart(s) with associated datasets and databases.
         ---
         post:
+          summary: Import chart(s) with associated datasets and databases
           requestBody:
             required: true
             content:

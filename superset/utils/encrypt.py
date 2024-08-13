@@ -24,6 +24,7 @@ from sqlalchemy import text, TypeDecorator
 from sqlalchemy.engine import Connection, Dialect, Row
 from sqlalchemy_utils import EncryptedType
 
+ENC_ADAPTER_TAG_ATTR_NAME = "__created_by_enc_field_adapter__"
 logger = logging.getLogger(__name__)
 
 
@@ -50,7 +51,9 @@ class SQLAlchemyUtilsAdapter(  # pylint: disable=too-few-public-methods
         if app_config:
             return EncryptedType(*args, app_config["SECRET_KEY"], **kwargs)
 
-        raise Exception("Missing app_config kwarg")
+        raise Exception(  # pylint: disable=broad-exception-raised
+            "Missing app_config kwarg"
+        )
 
 
 class EncryptedFieldFactory:
@@ -68,9 +71,17 @@ class EncryptedFieldFactory:
         self, *args: list[Any], **kwargs: Optional[dict[str, Any]]
     ) -> TypeDecorator:
         if self._concrete_type_adapter:
-            return self._concrete_type_adapter.create(self._config, *args, **kwargs)
+            adapter = self._concrete_type_adapter.create(self._config, *args, **kwargs)
+            setattr(adapter, ENC_ADAPTER_TAG_ATTR_NAME, True)
+            return adapter
 
-        raise Exception("App not initialized yet. Please call init_app first")
+        raise Exception(  # pylint: disable=broad-exception-raised
+            "App not initialized yet. Please call init_app first"
+        )
+
+    @staticmethod
+    def created_by_enc_field_factory(field: TypeDecorator) -> bool:
+        return getattr(field, ENC_ADAPTER_TAG_ATTR_NAME, False)
 
 
 class SecretsMigrator:
@@ -146,7 +157,7 @@ class SecretsMigrator:
                 unencrypted_value = previous_encrypted_type.process_result_value(
                     self._read_bytes(column_name, row[column_name]), self._dialect
                 )
-            except ValueError as exc:
+            except ValueError as ex:
                 # Failed to unencrypt
                 try:
                     encrypted_type.process_result_value(
@@ -160,7 +171,7 @@ class SecretsMigrator:
                     )
                     return
                 except Exception:
-                    raise Exception from exc
+                    raise Exception from ex  # pylint: disable=broad-exception-raised
 
             re_encrypted_columns[column_name] = encrypted_type.process_bind_param(
                 unencrypted_value,

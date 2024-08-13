@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useResizeDetector } from 'react-resize-detector';
 import { uniqWith } from 'lodash';
 import { styled } from '@superset-ui/core';
@@ -104,6 +104,7 @@ const StyledItem = styled.div<{
       text-overflow: ${collapsed ? 'unset' : 'ellipsis'};
       white-space: nowrap;
       text-decoration: ${onClick ? 'underline' : 'none'};
+      line-height: 1.4;
     }
   `}
 `;
@@ -147,6 +148,7 @@ const Item = ({
       collapsed={collapsed}
       last={last}
       onClick={onClick ? () => onClick(type) : undefined}
+      role={onClick ? 'button' : undefined}
     >
       <Icon iconSize="l" className="metadata-icon" />
       {!collapsed && (

@@ -16,7 +16,8 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import React, { forwardRef } from 'react';
+import { forwardRef, ReactNode } from 'react';
+
 import { styled, t } from '@superset-ui/core';
 import Icons from 'src/components/Icons';
 import { FilterRemoval } from './types';
@@ -112,7 +113,13 @@ const FilterTitleContainer = forwardRef<HTMLDivElement, Props>(
           className={classNames.join(' ')}
         >
           <div css={{ display: 'flex', width: '100%' }}>
-            <div css={{ alignItems: 'center', display: 'flex' }}>
+            <div
+              css={{
+                alignItems: 'center',
+                display: 'flex',
+                wordBreak: 'break-all',
+              }}
+            >
               {isRemoved ? t('(Removed)') : getFilterTitle(id)}
             </div>
             {!removedFilters[id] && isErrored && (
@@ -149,7 +156,7 @@ const FilterTitleContainer = forwardRef<HTMLDivElement, Props>(
     };
 
     const renderFilterGroups = () => {
-      const items: React.ReactNode[] = [];
+      const items: ReactNode[] = [];
       filters.forEach((item, index) => {
         items.push(
           <DraggableFilter

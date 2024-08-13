@@ -16,8 +16,9 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import React, {
+import {
   CSSProperties,
+  cloneElement,
   forwardRef,
   ReactElement,
   RefObject,
@@ -29,6 +30,7 @@ import React, {
   useRef,
   ReactNode,
 } from 'react';
+
 import { Global } from '@emotion/react';
 import { css, t, useTheme, usePrevious } from '@superset-ui/core';
 import { useResizeDetector } from 'react-resize-detector';
@@ -104,6 +106,10 @@ export interface DropdownContainerProps {
    * Main container additional style properties.
    */
   style?: CSSProperties;
+  /**
+   * Force render popover content before it's first opened
+   */
+  forceRender?: boolean;
 }
 
 export type Ref = HTMLDivElement & { open: () => void };
@@ -120,6 +126,7 @@ const DropdownContainer = forwardRef(
       dropdownTriggerIcon,
       dropdownTriggerText = t('More'),
       dropdownTriggerTooltip = null,
+      forceRender,
       style,
     }: DropdownContainerProps,
     outerRef: RefObject<Ref>,
@@ -132,7 +139,7 @@ const DropdownContainer = forwardRef(
     const [popoverVisible, setPopoverVisible] = useState(false);
 
     // We use React.useState to be able to mock the state in Jest
-    const [overflowingIndex, setOverflowingIndex] = React.useState<number>(-1);
+    const [overflowingIndex, setOverflowingIndex] = useState<number>(-1);
 
     let targetRef = useRef<HTMLDivElement>(null);
     if (dropdownRef) {
@@ -146,7 +153,7 @@ const DropdownContainer = forwardRef(
         ([items, ids], item) => {
           items.push({
             id: item.id,
-            element: React.cloneElement(item.element, { key: item.id }),
+            element: cloneElement(item.element, { key: item.id }),
           });
           ids.push(item.id);
           return [items, ids];
@@ -364,7 +371,7 @@ const DropdownContainer = forwardRef(
               visible={popoverVisible}
               onVisibleChange={visible => setPopoverVisible(visible)}
               placement="bottom"
-              destroyTooltipOnHide
+              forceRender={forceRender}
             >
               <Tooltip title={dropdownTriggerTooltip}>
                 <Button

@@ -18,10 +18,10 @@
  */
 /* eslint-disable react/jsx-key */
 
-import React from 'react';
 import { t } from '@superset-ui/core';
 import {
   ControlPanelSectionConfig,
+  ControlSubSectionHeader,
   CustomControlItem,
   D3_TIME_FORMAT_OPTIONS,
   D3_FORMAT_DOCS,
@@ -390,7 +390,11 @@ export const timeSeriesSection: ControlPanelSectionConfig[] = [
         'of query results',
     ),
     controlSetRows: [
-      [<div className="section-header">{t('Rolling Window')}</div>],
+      [
+        <ControlSubSectionHeader>
+          {t('Rolling Window')}
+        </ControlSubSectionHeader>,
+      ],
       [
         {
           name: 'rolling_type',
@@ -443,7 +447,11 @@ export const timeSeriesSection: ControlPanelSectionConfig[] = [
           },
         },
       ],
-      [<div className="section-header">{t('Time Comparison')}</div>],
+      [
+        <ControlSubSectionHeader>
+          {t('Time Comparison')}
+        </ControlSubSectionHeader>,
+      ],
       [
         {
           name: 'time_compare',
@@ -494,7 +502,7 @@ export const timeSeriesSection: ControlPanelSectionConfig[] = [
           },
         },
       ],
-      [<div className="section-header">{t('Resample')}</div>],
+      [<ControlSubSectionHeader>{t('Resample')}</ControlSubSectionHeader>],
       [
         {
           name: 'resample_rule',

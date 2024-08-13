@@ -16,7 +16,8 @@ KIND, either express or implied.  See the License for the
 specific language governing permissions and limitations
 under the License.
 #}
-<script>
+{% import "superset/macros.html" as macros %}
+<script nonce="{{ macros.get_nonce() }}">
   var db = $("#database");
   var schema = $("#schema");
 
@@ -36,7 +37,7 @@ under the License.
       dataType: 'json',
       contentType: "application/json; charset=utf-8"
     }).done(function (data) {
-      change_schema_field_in_formview(data ? data.schemas : [])
+      change_schema_field_in_formview(data ? data.schemas.sort() : [])
     }).fail(function (error) {
       var errorMsg = error.responseJSON.error;
       alert("ERROR: " + errorMsg);

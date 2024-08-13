@@ -17,6 +17,7 @@
  * under the License.
  */
 import {
+  CurrencyFormatter,
   DataRecordValue,
   GenericDataType,
   getNumberFormatter,
@@ -47,7 +48,6 @@ function formatValue(
     return [false, 'N/A'];
   }
   if (formatter) {
-    // in case percent metric can specify percent format in the future
     return [false, formatter(value as number)];
   }
   if (typeof value === 'string') {
@@ -61,11 +61,16 @@ export function formatColumnValue(
   value: DataRecordValue,
 ) {
   const { dataType, formatter, config = {} } = column;
-  const isNumber = dataType === GenericDataType.NUMERIC;
+  const isNumber = dataType === GenericDataType.Numeric;
   const smallNumberFormatter =
     config.d3SmallNumberFormat === undefined
       ? formatter
-      : getNumberFormatter(config.d3SmallNumberFormat);
+      : config.currencyFormat
+        ? new CurrencyFormatter({
+            d3Format: config.d3SmallNumberFormat,
+            currency: config.currencyFormat,
+          })
+        : getNumberFormatter(config.d3SmallNumberFormat);
   return formatValue(
     isNumber && typeof value === 'number' && Math.abs(value) < 1
       ? smallNumberFormatter
