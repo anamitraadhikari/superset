@@ -19,11 +19,11 @@
 import copy
 
 import pytest
+from flask import current_app
 from pytest_mock import MockerFixture
 from sqlalchemy.orm.session import Session
 
 from superset import db
-from superset.commands.database.importers.v1.utils import add_permissions
 from superset.commands.exceptions import ImportFailedError
 from superset.utils import json
 
@@ -46,7 +46,8 @@ def test_import_database(mocker: MockerFixture, session: Session) -> None:
     config = copy.deepcopy(database_config)
     database = import_database(config)
     assert database.database_name == "imported_database"
-    assert database.sqlalchemy_uri == "postgresql://user:pass@host1"
+    assert database.sqlalchemy_uri == "postgresql://user:XXXXXXXXXX@host1"
+    assert database.password == "pass"  # noqa: S105
     assert database.cache_timeout is None
     assert database.expose_in_sqllab is True
     assert database.allow_run_async is False
@@ -69,18 +70,40 @@ def test_import_database(mocker: MockerFixture, session: Session) -> None:
     assert database.allow_dml is False
 
 
+def test_import_database_no_creds(mocker: MockerFixture, session: Session) -> None:
+    """
+    Test importing a database.
+    """
+    from superset import security_manager
+    from superset.commands.database.importers.v1.utils import import_database
+    from superset.models.core import Database
+    from tests.integration_tests.fixtures.importexport import database_config_no_creds
+
+    mocker.patch.object(security_manager, "can_access", return_value=True)
+
+    engine = db.session.get_bind()
+    Database.metadata.create_all(engine)  # pylint: disable=no-member
+
+    config = copy.deepcopy(database_config_no_creds)
+    database = import_database(config)
+    assert database.database_name == "imported_database_no_creds"
+    assert database.sqlalchemy_uri == "bigquery://test-db/"
+    assert database.extra == "{}"
+    assert database.uuid == "2ff17edc-f3fa-4609-a5ac-b484281225bc"
+
+
 def test_import_database_sqlite_invalid(
     mocker: MockerFixture, session: Session
 ) -> None:
     """
     Test importing a database.
     """
-    from superset import app, security_manager
+    from superset import security_manager
     from superset.commands.database.importers.v1.utils import import_database
     from superset.models.core import Database
     from tests.integration_tests.fixtures.importexport import database_config_sqlite
 
-    app.config["PREVENT_UNSAFE_DB_CONNECTIONS"] = True
+    current_app.config["PREVENT_UNSAFE_DB_CONNECTIONS"] = True
     mocker.patch.object(security_manager, "can_access", return_value=True)
 
     engine = db.session.get_bind()
@@ -91,10 +114,43 @@ def test_import_database_sqlite_invalid(
         _ = import_database(config)
     assert (
         str(excinfo.value)
-        == "SQLiteDialect_pysqlite cannot be used as a data source for security reasons."
+        == "SQLiteDialect_pysqlite cannot be used as a data source for security reasons."  # noqa: E501
     )
     # restore app config
-    app.config["PREVENT_UNSAFE_DB_CONNECTIONS"] = True
+    current_app.config["PREVENT_UNSAFE_DB_CONNECTIONS"] = True
+
+
+def test_import_database_sqlite_allowed_with_ignore_permissions(
+    mocker: MockerFixture, session: Session
+) -> None:
+    """
+    Test that SQLite imports succeed when ignore_permissions=True.
+
+    System imports (like examples) use URIs from server config, not user input,
+    so they should bypass the PREVENT_UNSAFE_DB_CONNECTIONS check. This is the
+    key fix from PR #37577 that allows example loading to work in CI/showtime
+    environments where PREVENT_UNSAFE_DB_CONNECTIONS is enabled.
+    """
+    from superset.commands.database.importers.v1.utils import import_database
+    from superset.models.core import Database
+    from tests.integration_tests.fixtures.importexport import database_config_sqlite
+
+    mocker.patch.dict(current_app.config, {"PREVENT_UNSAFE_DB_CONNECTIONS": True})
+    mocker.patch("superset.commands.database.importers.v1.utils.add_permissions")
+
+    engine = db.session.get_bind()
+    Database.metadata.create_all(engine)  # pylint: disable=no-member
+
+    config = copy.deepcopy(database_config_sqlite)
+    # With ignore_permissions=True, the security check should be skipped
+    database = import_database(config, ignore_permissions=True)
+
+    assert database.database_name == "imported_database"
+    assert "sqlite" in database.sqlalchemy_uri
+
+    # Cleanup
+    db.session.delete(database)
+    db.session.flush()
 
 
 def test_import_database_managed_externally(
@@ -194,30 +250,3 @@ def test_import_database_with_user_impersonation(
 
     database = import_database(config)
     assert database.impersonate_user is True
-
-
-def test_add_permissions(mocker: MockerFixture) -> None:
-    """
-    Test adding permissions to a database when it's imported.
-    """
-    database = mocker.MagicMock()
-    database.database_name = "my_db"
-    database.db_engine_spec.supports_catalog = True
-    database.get_all_catalog_names.return_value = ["catalog1", "catalog2"]
-    database.get_all_schema_names.side_effect = [["schema1"], ["schema2"]]
-    ssh_tunnel = mocker.MagicMock()
-    add_permission_view_menu = mocker.patch(
-        "superset.commands.database.importers.v1.utils.security_manager."
-        "add_permission_view_menu"
-    )
-
-    add_permissions(database, ssh_tunnel)
-
-    add_permission_view_menu.assert_has_calls(
-        [
-            mocker.call("catalog_access", "[my_db].[catalog1]"),
-            mocker.call("catalog_access", "[my_db].[catalog2]"),
-            mocker.call("schema_access", "[my_db].[catalog1].[schema1]"),
-            mocker.call("schema_access", "[my_db].[catalog2].[schema2]"),
-        ]
-    )

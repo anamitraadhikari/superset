@@ -17,11 +17,13 @@
  * under the License.
  */
 
-import { areObjectsEqual } from 'src/reduxUtils';
 import { DataMaskStateWithId, Filter, FilterState } from '@superset-ui/core';
+import { useSelector } from 'react-redux';
+import { createSelector } from '@reduxjs/toolkit';
+import { areObjectsEqual } from 'src/reduxUtils';
 import { testWithId } from 'src/utils/testUtils';
 import { RootState } from 'src/dashboard/types';
-import { useSelector } from 'react-redux';
+import { FilterElement } from './FilterControls/types';
 
 export const getOnlyExtraFormData = (data: DataMaskStateWithId) =>
   Object.values(data).reduce(
@@ -30,9 +32,13 @@ export const getOnlyExtraFormData = (data: DataMaskStateWithId) =>
   );
 
 export const checkIsMissingRequiredValue = (
-  filter: Filter,
+  filter: FilterElement,
   filterState?: FilterState,
 ) => {
+  const isRequired = !!filter.controlValues?.enableEmptyFilter;
+
+  if (!isRequired) return false;
+
   const value = filterState?.value;
   // TODO: this property should be unhardcoded
   return (
@@ -41,43 +47,68 @@ export const checkIsMissingRequiredValue = (
   );
 };
 
+export const checkIsValidateError = (dataMask: DataMaskStateWithId) => {
+  const values = Object.values(dataMask);
+  return values.every(value => value.filterState?.validateStatus !== 'error');
+};
+
 export const checkIsApplyDisabled = (
   dataMaskSelected: DataMaskStateWithId,
   dataMaskApplied: DataMaskStateWithId,
   filters: Filter[],
 ) => {
+  if (!checkIsValidateError(dataMaskSelected)) {
+    return true;
+  }
+
   const dataSelectedValues = Object.values(dataMaskSelected);
   const dataAppliedValues = Object.values(dataMaskApplied);
-  return (
-    areObjectsEqual(
-      getOnlyExtraFormData(dataMaskSelected),
-      getOnlyExtraFormData(dataMaskApplied),
-      { ignoreUndefined: true },
-    ) ||
-    dataSelectedValues.length !== dataAppliedValues.length ||
-    filters.some(filter =>
-      checkIsMissingRequiredValue(
-        filter,
-        dataMaskSelected?.[filter?.id]?.filterState,
-      ),
-    )
+
+  const hasMissingRequiredFilter = filters.some(filter =>
+    checkIsMissingRequiredValue(
+      filter,
+      dataMaskSelected?.[filter?.id]?.filterState,
+    ),
   );
+
+  const selectedExtraFormData = getOnlyExtraFormData(dataMaskSelected);
+  const appliedExtraFormData = getOnlyExtraFormData(dataMaskApplied);
+
+  const areEqual = areObjectsEqual(
+    selectedExtraFormData,
+    appliedExtraFormData,
+    { ignoreUndefined: true },
+  );
+
+  const result =
+    areEqual ||
+    dataSelectedValues.length !== dataAppliedValues.length ||
+    hasMissingRequiredFilter;
+
+  return result;
 };
+
+const chartsVerboseMapSelector = createSelector(
+  [
+    (state: RootState) => state.sliceEntities.slices,
+    (state: RootState) => state.datasources,
+  ],
+  (slices, datasources) =>
+    Object.keys(slices).reduce((chartsVerboseMaps, chartId) => {
+      const numericChartId = Number(chartId);
+      const chartDatasource = slices[numericChartId]?.form_data?.datasource
+        ? datasources[slices[numericChartId].form_data.datasource]
+        : undefined;
+      return {
+        ...chartsVerboseMaps,
+        [chartId]: chartDatasource ? chartDatasource.verbose_map : {},
+      };
+    }, {}),
+);
 
 export const useChartsVerboseMaps = () =>
   useSelector<RootState, { [chartId: string]: Record<string, string> }>(
-    state => {
-      const { charts, datasources } = state;
-
-      return Object.keys(state.charts).reduce((chartsVerboseMaps, chartId) => {
-        const chartDatasource =
-          datasources[charts[chartId]?.form_data?.datasource];
-        return {
-          ...chartsVerboseMaps,
-          [chartId]: chartDatasource ? chartDatasource.verbose_map : {},
-        };
-      }, {});
-    },
+    chartsVerboseMapSelector,
   );
 
 export const FILTER_BAR_TEST_ID = 'filter-bar';
