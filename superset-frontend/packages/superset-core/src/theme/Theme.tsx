@@ -37,6 +37,20 @@ import {
 } from './types';
 import { normalizeThemeConfig, serializeThemeConfig } from './utils';
 
+const SUPERSET_TOKEN_DEFAULTS: Partial<SupersetTheme> = {
+  fontSizeXS: '10px',
+  fontSizeXXL: '28px',
+  fontWeightNormal: 'normal',
+  fontWeightLight: '200',
+  fontWeightBold: '700',
+  brandIconMaxWidth: 37,
+  brandLogoAlt: 'Superset',
+  brandLogoUrl: '/static/assets/images/superset-logo-horiz.png',
+  brandLogoMargin: '0',
+  brandLogoHref: '/',
+  brandLogoHeight: '28',
+};
+
 export class Theme {
   // Forward-compat: TS 6.0 enforces strictPropertyInitialization here;
   // both fields are assigned via setConfig() during construction, so we
@@ -136,8 +150,9 @@ export class Theme {
     // Set the base theme properties
     this.antdConfig = antdConfig;
     this.theme = {
-      ...tokens, // First apply Ant Design computed tokens
-      ...antdConfig.token, // Then override with our custom tokens
+      ...SUPERSET_TOKEN_DEFAULTS, // Defaults for required Superset-specific tokens
+      ...tokens, // Ant Design computed tokens
+      ...antdConfig.token, // User's custom token overrides
       // Include Superset-specific properties from top-level config
       ...(echartsOptionsOverrides && { echartsOptionsOverrides }),
       ...(echartsOptionsOverridesByChartType && {

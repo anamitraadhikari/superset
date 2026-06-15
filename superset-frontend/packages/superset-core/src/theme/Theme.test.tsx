@@ -909,3 +909,40 @@ test('colorLink is preserved in setConfig when explicitly set', () => {
   expect(theme.theme.colorPrimary).toBe('#f759ab');
   expect(theme.theme.colorLink).toBe('#ff0000');
 });
+
+test('partial override with only colorPrimary produces complete theme without crashing', () => {
+  const theme = Theme.fromConfig({
+    token: { colorPrimary: '#7c3aed' },
+  });
+
+  expect(theme.theme.colorPrimary).toBe('#7c3aed');
+  expect(theme.theme.fontWeightLight).toBe('200');
+  expect(theme.theme.fontWeightNormal).toBe('normal');
+  expect(theme.theme.fontSizeXS).toBe('10px');
+  expect(theme.theme.brandIconMaxWidth).toBe(37);
+  expect(theme.theme.sizeUnit).toBeDefined();
+  expect(theme.theme.fontFamily).toBeDefined();
+});
+
+test('partial override via setConfig fills missing Superset-specific tokens', () => {
+  const theme = Theme.fromConfig();
+  theme.setConfig({ token: { colorPrimary: '#dc2626' } });
+
+  expect(theme.theme.colorPrimary).toBe('#dc2626');
+  expect(theme.theme.fontWeightLight).toBe('200');
+  expect(theme.theme.brandLogoAlt).toBe('Superset');
+  expect(theme.theme.brandLogoHref).toBe('/');
+});
+
+test('explicit Superset-specific tokens override defaults', () => {
+  const theme = Theme.fromConfig({
+    token: {
+      colorPrimary: '#7c3aed',
+      fontWeightLight: '300',
+      brandLogoAlt: 'My App',
+    },
+  });
+
+  expect(theme.theme.fontWeightLight).toBe('300');
+  expect(theme.theme.brandLogoAlt).toBe('My App');
+});
